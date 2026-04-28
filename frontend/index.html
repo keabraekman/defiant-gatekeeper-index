@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Defiant Gatekeeper Index</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Macro risk dashboard</p>
+        <h1>Defiant Gatekeeper Index</h1>
+      </div>
+      <div class="generated">
+        <span>Generated</span>
+        <strong id="generatedAt">Loading...</strong>
+      </div>
+    </header>
+
+    <main>
+      <section class="summary-grid" id="summaryCards" aria-label="Dashboard summary"></section>
+
+      <section class="layout-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>Component Scores</h2>
+            <span>0 to 100</span>
+          </div>
+          <div class="score-list" id="componentScores"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <h2>Drivers</h2>
+            <span>Bullish and bearish</span>
+          </div>
+          <div class="driver-columns">
+            <div>
+              <h3>Bullish</h3>
+              <ul id="bullishDrivers"></ul>
+            </div>
+            <div>
+              <h3>Bearish</h3>
+              <ul id="bearishDrivers"></ul>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Inputs</h2>
+          <span>Latest programmatic readings</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Input</th>
+                <th>Value</th>
+                <th>Date</th>
+                <th>Source</th>
+                <th>Freshness</th>
+              </tr>
+            </thead>
+            <tbody id="inputTable"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Data Quality</h2>
+          <span>Warnings and fallbacks</span>
+        </div>
+        <ul class="quality-list" id="qualityIssues"></ul>
+      </section>
+    </main>
+
+    <footer>
+      <p id="disclaimer">
+        This dashboard is for educational purposes only and is not financial advice.
+      </p>
+    </footer>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
