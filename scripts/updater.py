@@ -31,9 +31,9 @@ FRED_SERIES = {
     "cpi": ("CPIAUCSL", 60),
     "core_cpi": ("CPILFESL", 60),
     "ppi": ("PPIACO", 60),
-    "unemployment_rate": ("UNRATE", 45),
+    "unemployment_rate": ("UNRATE", 75),
     "initial_jobless_claims": ("ICSA", 14),
-    "nonfarm_payrolls": ("PAYEMS", 45),
+    "nonfarm_payrolls": ("PAYEMS", 75),
     "oil_price": ("DCOILWTICO", 10),
 }
 
@@ -78,86 +78,74 @@ def run_live_update() -> dict[str, Any]:
         "fred_series_stale": False,
     }
 
-    mock_inputs = build_mock_inputs()
-
     fred_api_key = os.getenv("FRED_API_KEY")
     if not fred_api_key:
-        issues.append("Missing FRED_API_KEY; using mock FRED values.")
-        quality_context["missing_major_inputs"] += 1
-        for logical_name in FRED_SERIES:
-            inputs[logical_name] = with_freshness(mock_inputs[logical_name], "mock")
-    else:
-        for logical_name, (series_id, max_age_days) in FRED_SERIES.items():
-            item = fetch_fred_series(series_id, fred_api_key)
-            if item.get("error"):
-                issues.append(f"{item['source']} unavailable; using neutral score where needed. {item['error']}")
-                quality_context["missing_major_inputs"] += 1
-            else:
-                item["freshness"] = freshness_for_date(item.get("date"), max_age_days)
-                if item["freshness"] == "stale":
-                    issues.append(f"{item['source']} appears stale as of {item.get('date')}.")
-                    quality_context["fred_series_stale"] = True
-            inputs[logical_name] = item
+        issues.append("Missing FRED_API_KEY; used FRED public CSV fallback.")
+    for logical_name, (series_id, max_age_days) in FRED_SERIES.items():
+        item = fetch_fred_series(series_id, fred_api_key)
+        if item.get("error"):
+            issues.append(f"{item['source']} unavailable; using neutral score where needed. {item['error']}")
+            quality_context["missing_major_inputs"] += 1
+        else:
+            item["freshness"] = freshness_for_date(item.get("date"), max_age_days)
+            if item["freshness"] == "stale":
+                issues.append(f"{item['source']} appears stale as of {item.get('date')}.")
+                quality_context["fred_series_stale"] = True
+        inputs[logical_name] = item
 
     finra_url = os.getenv("FINRA_MARGIN_DEBT_URL")
     if not finra_url:
-        issues.append("Missing FINRA_MARGIN_DEBT_URL; using mock FINRA margin-debt value.")
+        issues.append("Missing FINRA_MARGIN_DEBT_URL; used FINRA official margin-statistics page fallback.")
+    finra_item = fetch_finra_margin_debt(finra_url)
+    if finra_item.get("error"):
+        issues.append(
+            f"FINRA margin debt unavailable; margin component uses neutral score. {finra_item['error']}"
+        )
+        quality_context["missing_major_inputs"] += 1
         quality_context["finra_missing_or_stale"] = True
-        inputs["finra_margin_debt"] = with_freshness(mock_inputs["finra_margin_debt"], "mock")
     else:
-        finra_item = fetch_finra_margin_debt(finra_url)
-        if finra_item.get("error"):
-            issues.append(
-                f"FINRA margin debt unavailable; margin component uses neutral score. {finra_item['error']}"
-            )
-            quality_context["missing_major_inputs"] += 1
+        finra_item["freshness"] = freshness_for_date(finra_item.get("date"), 120)
+        if finra_item["freshness"] == "stale":
+            issues.append(f"FINRA margin debt appears stale as of {finra_item.get('date')}.")
             quality_context["finra_missing_or_stale"] = True
-        else:
-            finra_item["freshness"] = freshness_for_date(finra_item.get("date"), 120)
-            if finra_item["freshness"] == "stale":
-                issues.append(f"FINRA margin debt appears stale as of {finra_item.get('date')}.")
-                quality_context["finra_missing_or_stale"] = True
-        inputs["finra_margin_debt"] = finra_item
+    inputs["finra_margin_debt"] = finra_item
 
     alpha_vantage_key = os.getenv("ALPHA_VANTAGE_API_KEY")
     if not alpha_vantage_key:
-        issues.append("Missing ALPHA_VANTAGE_API_KEY; using mock ETF relative-strength values.")
-        quality_context["etf_data_failed"] = True
-        inputs["etf_relative_strength"] = with_freshness(mock_inputs["etf_relative_strength"], "mock")
-    else:
-        etf_histories: dict[str, dict[str, Any]] = {}
-        etf_errors: list[str] = []
-        for symbol in ETF_SYMBOLS:
-            item = fetch_alpha_vantage_daily_adjusted(symbol, alpha_vantage_key)
-            if item.get("error"):
-                etf_errors.append(f"{symbol}: {item['error']}")
-            else:
-                etf_histories[symbol] = item
+        issues.append("Missing ALPHA_VANTAGE_API_KEY; used Yahoo Finance public chart fallback for ETFs.")
+    etf_histories: dict[str, dict[str, Any]] = {}
+    etf_errors: list[str] = []
+    for symbol in ETF_SYMBOLS:
+        item = fetch_alpha_vantage_daily_adjusted(symbol, alpha_vantage_key)
+        if item.get("error"):
+            etf_errors.append(f"{symbol}: {item['error']}")
+        else:
+            etf_histories[symbol] = item
 
-        if etf_errors or len(etf_histories) != len(ETF_SYMBOLS):
+    if etf_errors or len(etf_histories) != len(ETF_SYMBOLS):
+        issues.append(
+            "ETF relative strength unavailable; sector leadership uses neutral score. "
+            + " | ".join(etf_errors[:3])
+        )
+        quality_context["etf_data_failed"] = True
+        inputs["etf_relative_strength"] = {
+            "value": None,
+            "date": None,
+            "source": "ETF relative strength:SPY,QQQ,SMH,XLK,IWM",
+            "freshness": "missing",
+            "history": [],
+        }
+    else:
+        relative_strength = calculate_relative_strength(etf_histories)
+        if relative_strength.get("error"):
             issues.append(
                 "ETF relative strength unavailable; sector leadership uses neutral score. "
-                + " | ".join(etf_errors[:3])
+                + relative_strength["error"]
             )
             quality_context["etf_data_failed"] = True
-            inputs["etf_relative_strength"] = {
-                "value": None,
-                "date": None,
-                "source": "Alpha Vantage:SPY,QQQ,SMH,XLK,IWM",
-                "freshness": "missing",
-                "history": [],
-            }
         else:
-            relative_strength = calculate_relative_strength(etf_histories)
-            if relative_strength.get("error"):
-                issues.append(
-                    "ETF relative strength unavailable; sector leadership uses neutral score. "
-                    + relative_strength["error"]
-                )
-                quality_context["etf_data_failed"] = True
-            else:
-                relative_strength["freshness"] = freshness_for_date(relative_strength.get("date"), 10)
-            inputs["etf_relative_strength"] = relative_strength
+            relative_strength["freshness"] = freshness_for_date(relative_strength.get("date"), 10)
+        inputs["etf_relative_strength"] = relative_strength
 
     return calculate_dashboard(
         inputs=inputs,

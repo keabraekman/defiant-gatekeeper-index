@@ -1,135 +1,137 @@
 {
-  "generated_at": "2026-04-28T22:52:54Z",
+  "generated_at": "2026-04-28T23:12:04Z",
   "dg_index": {
-    "score": 67,
+    "score": 65,
     "label": "Bullish",
     "components": {
-      "fed_liquidity": 65,
+      "fed_liquidity": 100,
       "vix": 60,
-      "margin_deleveraging": 75,
+      "margin_deleveraging": 45,
       "credit_health": 60,
-      "inflation_room": 75,
+      "inflation_room": 30,
       "labor_economy": 75,
       "sector_leadership": 60
     }
   },
   "regime_label": "Bullish",
   "confidence_score": {
-    "score": 4.5,
+    "score": 5.0,
     "label": "High"
   },
   "fed_liquidity_quadrant": {
-    "label": "Mixed / Improving",
+    "label": "Very Bullish Liquidity",
     "rate_trend": "flat_or_falling",
-    "balance_sheet_trend": "shrinking"
+    "balance_sheet_trend": "expanding"
   },
   "asset_tilt": {
     "label": "SPY core + selective QQQ/XLK if leading",
     "notes": []
   },
   "bull_trap_risk": {
-    "score": 30,
-    "label": "Low"
+    "score": 41,
+    "label": "Medium"
   },
   "exit_warning": {
-    "score": 10,
+    "score": 25,
     "label": "No Exit Warning"
   },
   "top_bullish_drivers": [
-    "Margin deleveraging supportive (75)",
-    "Inflation room supportive (75)",
+    "Fed liquidity supportive (100)",
     "Labor/economy supportive (75)",
-    "Bull trap risk is low",
     "No exit warning is active"
   ],
-  "top_bearish_drivers": [],
+  "top_bearish_drivers": [
+    "Inflation room pressured (30)"
+  ],
   "inputs": {
     "vix": {
-      "value": 22.5,
-      "date": "2026-04-28",
+      "value": 18.02,
+      "date": "2026-04-27",
       "source": "FRED:VIXCLS",
-      "freshness": "mock"
+      "freshness": "fresh"
     },
     "effective_fed_funds_rate": {
-      "value": 5.25,
-      "date": "2026-04-28",
+      "value": 3.64,
+      "date": "2026-04-27",
       "source": "FRED:DFF",
-      "freshness": "mock"
+      "freshness": "fresh"
     },
     "fed_balance_sheet": {
-      "value": 7600.0,
-      "date": "2026-04-28",
+      "value": 6707419.0,
+      "date": "2026-04-22",
       "source": "FRED:WALCL",
-      "freshness": "mock"
-    },
-    "finra_margin_debt": {
-      "value": 760.0,
-      "date": "2026-04-28",
-      "source": "FINRA:Margin Debt",
-      "freshness": "mock"
+      "freshness": "fresh"
     },
     "high_yield_credit_spread": {
-      "value": 4.8,
-      "date": "2026-04-28",
+      "value": 2.84,
+      "date": "2026-04-27",
       "source": "FRED:BAMLH0A0HYM2",
-      "freshness": "mock"
+      "freshness": "fresh"
     },
     "cpi": {
-      "value": 320.0,
-      "date": "2026-04-28",
+      "value": 330.293,
+      "date": "2026-03-01",
       "source": "FRED:CPIAUCSL",
-      "freshness": "mock"
+      "freshness": "fresh"
     },
     "core_cpi": {
-      "value": 325.0,
-      "date": "2026-04-28",
+      "value": 334.165,
+      "date": "2026-03-01",
       "source": "FRED:CPILFESL",
-      "freshness": "mock"
+      "freshness": "fresh"
     },
     "ppi": {
-      "value": 255.0,
-      "date": "2026-04-28",
+      "value": 274.102,
+      "date": "2026-03-01",
       "source": "FRED:PPIACO",
-      "freshness": "mock"
+      "freshness": "fresh"
     },
     "unemployment_rate": {
-      "value": 4.0,
-      "date": "2026-04-28",
+      "value": 4.3,
+      "date": "2026-03-01",
       "source": "FRED:UNRATE",
-      "freshness": "mock"
+      "freshness": "fresh"
     },
     "initial_jobless_claims": {
-      "value": 220000.0,
-      "date": "2026-04-28",
+      "value": 214000.0,
+      "date": "2026-04-18",
       "source": "FRED:ICSA",
-      "freshness": "mock"
+      "freshness": "fresh"
     },
     "nonfarm_payrolls": {
-      "value": 158000.0,
-      "date": "2026-04-28",
+      "value": 158637.0,
+      "date": "2026-03-01",
       "source": "FRED:PAYEMS",
-      "freshness": "mock"
+      "freshness": "fresh"
     },
     "oil_price": {
-      "value": 82.0,
-      "date": "2026-04-28",
+      "value": 91.06,
+      "date": "2026-04-20",
       "source": "FRED:DCOILWTICO",
-      "freshness": "mock"
+      "freshness": "fresh"
+    },
+    "finra_margin_debt": {
+      "value": 1220922.0,
+      "date": "2026-03-31",
+      "source": "FINRA:Margin Statistics page",
+      "freshness": "fresh"
     },
     "etf_relative_strength": {
       "value": {
-        "QQQ": 3.8,
-        "SMH": 6.4,
-        "XLK": 4.9,
-        "IWM": -1.2
+        "QQQ": 1.71,
+        "SMH": 18.01,
+        "XLK": 4.14,
+        "IWM": 1.04
       },
       "date": "2026-04-28",
-      "source": "Alpha Vantage:SPY,QQQ,SMH,XLK,IWM",
-      "freshness": "mock"
+      "source": "Yahoo Finance:SPY,QQQ,SMH,XLK,IWM",
+      "freshness": "fresh"
     }
   },
   "data_quality_issues": [
-    "Mock data in use; configure repository secrets for live updates."
+    "Missing FRED_API_KEY; used FRED public CSV fallback.",
+    "Missing FINRA_MARGIN_DEBT_URL; used FINRA official margin-statistics page fallback.",
+    "Missing ALPHA_VANTAGE_API_KEY; used Yahoo Finance public chart fallback for ETFs."
   ],
   "disclaimer": "This dashboard is for educational purposes only and is not financial advice."
 }

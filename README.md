@@ -51,7 +51,7 @@ Other sources:
 - FINRA margin debt from `FINRA_MARGIN_DEBT_URL`
 - ETF adjusted closes from Alpha Vantage for `SPY`, `QQQ`, `SMH`, `XLK`, and `IWM`
 
-If a source fails, the updater records a data-quality issue and uses neutral scoring for the affected component. Missing credentials in live mode fall back to mock values so the site still deploys.
+If a source fails, the updater records a data-quality issue and uses neutral scoring for the affected component. When secrets are not configured, live mode uses public fallbacks where available: FRED public CSV downloads, FINRA's official margin-statistics page, and Yahoo Finance chart data for ETF adjusted closes.
 
 ## Local Development
 
@@ -118,7 +118,7 @@ Both modes write:
 
 `--mock` uses deterministic sample values and adds a data-quality warning.
 
-`--live` reads environment variables, fetches real data, and only falls back when a configured source is missing or unavailable. The calculation rules live in `scripts/calculations.py` and are intentionally simple to modify.
+`--live` reads environment variables, fetches real data, and only falls back when a configured source is missing or unavailable. If secrets are absent, it still attempts the public no-key fallbacks before using neutral scores. The calculation rules live in `scripts/calculations.py` and are intentionally simple to modify.
 
 ## Disclaimer
 

@@ -463,6 +463,34 @@ def percent_change_over_days(input_item: dict[str, Any] | None, days: int) -> fl
     return ((latest["value"] / prior["value"]) - 1) * 100
 
 
+def absolute_change_over_observations(
+    input_item: dict[str, Any] | None, observations_back: int
+) -> float | None:
+    if not input_item:
+        return None
+    history = clean_history(input_item.get("history"))
+    if len(history) <= observations_back:
+        return None
+    latest = history[-1]
+    prior = history[-1 - observations_back]
+    return latest["value"] - prior["value"]
+
+
+def percent_change_over_observations(
+    input_item: dict[str, Any] | None, observations_back: int
+) -> float | None:
+    if not input_item:
+        return None
+    history = clean_history(input_item.get("history"))
+    if len(history) <= observations_back:
+        return None
+    latest = history[-1]
+    prior = history[-1 - observations_back]
+    if prior["value"] == 0:
+        return None
+    return ((latest["value"] / prior["value"]) - 1) * 100
+
+
 def year_over_year_percent(input_item: dict[str, Any] | None) -> float | None:
     return percent_change_over_days(input_item, 365)
 
@@ -553,7 +581,11 @@ def calculate_dashboard(
     vix = latest_value(inputs.get("vix"))
     rate_change_3m = absolute_change_over_days(inputs.get("effective_fed_funds_rate"), 90)
     balance_sheet_pct_13w = percent_change_over_days(inputs.get("fed_balance_sheet"), 91)
-    margin_debt_change_6m_pct = percent_change_over_days(inputs.get("finra_margin_debt"), 183)
+    margin_debt_change_6m_pct = percent_change_over_observations(
+        inputs.get("finra_margin_debt"), 6
+    )
+    if margin_debt_change_6m_pct is None:
+        margin_debt_change_6m_pct = percent_change_over_days(inputs.get("finra_margin_debt"), 183)
     high_yield_spread = latest_value(inputs.get("high_yield_credit_spread"))
     spread_change_3m = absolute_change_over_days(inputs.get("high_yield_credit_spread"), 90)
     cpi_yoy = year_over_year_percent(inputs.get("cpi"))
@@ -561,9 +593,15 @@ def calculate_dashboard(
     cpi_yoy_delta = yoy_change(inputs.get("cpi"))
     core_cpi_yoy_delta = yoy_change(inputs.get("core_cpi"))
     ppi_change_3m = percent_change_over_days(inputs.get("ppi"), 90)
-    unemployment_change_3m = absolute_change_over_days(inputs.get("unemployment_rate"), 90)
+    unemployment_change_3m = absolute_change_over_observations(
+        inputs.get("unemployment_rate"), 3
+    )
+    if unemployment_change_3m is None:
+        unemployment_change_3m = absolute_change_over_days(inputs.get("unemployment_rate"), 90)
     claims_change_3m_pct = percent_change_over_days(inputs.get("initial_jobless_claims"), 90)
-    payrolls_change_1m = absolute_change_over_days(inputs.get("nonfarm_payrolls"), 30)
+    payrolls_change_1m = absolute_change_over_observations(inputs.get("nonfarm_payrolls"), 1)
+    if payrolls_change_1m is None:
+        payrolls_change_1m = absolute_change_over_days(inputs.get("nonfarm_payrolls"), 30)
     oil_change_3m_pct = percent_change_over_days(inputs.get("oil_price"), 90)
     etf_relative_strength = inputs.get("etf_relative_strength", {}).get("value")
     if not isinstance(etf_relative_strength, dict):

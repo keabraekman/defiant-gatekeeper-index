@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import calendar
+import csv
+import html
 import io
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 
 FRED_OBSERVATIONS_URL = "https://api.stlouisfed.org/fred/series/observations"
+FRED_PUBLIC_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
 ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query"
+YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+FINRA_MARGIN_STATISTICS_URL = (
+    "https://www.finra.org/rules-guidance/key-topics/margin-accounts/margin-statistics"
+)
 
 
 def _missing(source: str, message: str) -> dict[str, Any]:
@@ -33,7 +42,7 @@ def fetch_fred_series(series_id: str, api_key: str | None) -> dict[str, Any]:
 
     source = f"FRED:{series_id}"
     if not api_key:
-        return _missing(source, "Missing FRED_API_KEY")
+        return fetch_fred_series_public(series_id)
 
     import requests
 
@@ -79,12 +88,55 @@ def fetch_fred_series(series_id: str, api_key: str | None) -> dict[str, Any]:
     }
 
 
+def fetch_fred_series_public(series_id: str) -> dict[str, Any]:
+    """Fetch FRED observations from the public graph CSV endpoint."""
+
+    import requests
+
+    source = f"FRED:{series_id}"
+    try:
+        response = requests.get(
+            FRED_PUBLIC_CSV_URL,
+            params={"id": series_id},
+            timeout=30,
+            headers={"User-Agent": "curl/8.0"},
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        return _missing(source, f"FRED public CSV request failed: {exc}")
+
+    observations: list[dict[str, Any]] = []
+    reader = csv.DictReader(io.StringIO(response.text))
+    for row in reader:
+        observed_date = row.get("observation_date") or row.get("DATE") or row.get("date")
+        raw_value = row.get(series_id)
+        if raw_value in (None, "", "."):
+            continue
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+        observations.append({"date": observed_date, "value": value})
+
+    if not observations:
+        return _missing(source, "FRED public CSV returned no numeric observations")
+
+    latest = observations[-1]
+    return {
+        "value": latest["value"],
+        "date": latest["date"],
+        "source": source,
+        "freshness": "unknown",
+        "history": observations,
+    }
+
+
 def fetch_alpha_vantage_daily_adjusted(symbol: str, api_key: str | None) -> dict[str, Any]:
     """Fetch Alpha Vantage daily adjusted close history for one symbol."""
 
     source = f"Alpha Vantage:{symbol}"
     if not api_key:
-        return _missing(source, "Missing ALPHA_VANTAGE_API_KEY")
+        return fetch_yahoo_daily_adjusted(symbol)
 
     import requests
 
@@ -138,6 +190,63 @@ def fetch_alpha_vantage_daily_adjusted(symbol: str, api_key: str | None) -> dict
     }
 
 
+def fetch_yahoo_daily_adjusted(symbol: str) -> dict[str, Any]:
+    """Fetch public Yahoo Finance adjusted-close history for ETF fallback data."""
+
+    import requests
+
+    source = f"Yahoo Finance:{symbol}"
+    try:
+        response = requests.get(
+            YAHOO_CHART_URL.format(symbol=symbol),
+            params={
+                "range": "1y",
+                "interval": "1d",
+                "events": "history",
+                "includeAdjustedClose": "true",
+            },
+            timeout=30,
+            headers={"User-Agent": "Mozilla/5.0 defiant-gatekeeper-index/1.0"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException as exc:
+        return _missing(source, f"Yahoo Finance request failed: {exc}")
+    except ValueError as exc:
+        return _missing(source, f"Yahoo Finance JSON parse failed: {exc}")
+
+    result = (payload.get("chart", {}).get("result") or [None])[0]
+    if not result:
+        return _missing(source, "Yahoo Finance response did not include chart data")
+
+    timestamps = result.get("timestamp") or []
+    indicators = result.get("indicators", {})
+    adjusted = (indicators.get("adjclose") or [{}])[0].get("adjclose") or []
+    closes = (indicators.get("quote") or [{}])[0].get("close") or []
+
+    history: list[dict[str, Any]] = []
+    for index, timestamp in enumerate(timestamps):
+        raw_value = adjusted[index] if index < len(adjusted) else None
+        if raw_value is None and index < len(closes):
+            raw_value = closes[index]
+        if raw_value is None:
+            continue
+        observed_date = datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat()
+        history.append({"date": observed_date, "value": float(raw_value)})
+
+    if len(history) < 64:
+        return _missing(source, "Yahoo Finance returned fewer than 64 trading days")
+
+    latest = history[-1]
+    return {
+        "value": latest["value"],
+        "date": latest["date"],
+        "source": source,
+        "freshness": "unknown",
+        "history": history,
+    }
+
+
 def calculate_relative_strength(
     adjusted_price_histories: dict[str, dict[str, Any]],
     benchmark_symbol: str = "SPY",
@@ -180,10 +289,11 @@ def calculate_relative_strength(
     if not relative:
         return _missing("Alpha Vantage:ETF relative strength", "No ETF relative strength values")
 
+    source = _relative_strength_source(adjusted_price_histories)
     return {
         "value": relative,
         "date": max(latest_dates) if latest_dates else benchmark.get("date"),
-        "source": "Alpha Vantage:SPY,QQQ,SMH,XLK,IWM",
+        "source": source,
         "freshness": "unknown",
         "history": [],
     }
@@ -194,7 +304,7 @@ def fetch_finra_margin_debt(url: str | None) -> dict[str, Any]:
 
     source = "FINRA:Margin Debt"
     if not url:
-        return _missing(source, "Missing FINRA_MARGIN_DEBT_URL")
+        return fetch_finra_margin_debt_page()
 
     import requests
 
@@ -224,6 +334,57 @@ def fetch_finra_margin_debt(url: str | None) -> dict[str, Any]:
         return _missing(source, f"FINRA parse failed: {exc}")
 
     return _missing(source, "FINRA file did not include recognizable margin debt data")
+
+
+def fetch_finra_margin_debt_page() -> dict[str, Any]:
+    """Parse FINRA's official margin-statistics web page as a no-key fallback."""
+
+    import requests
+
+    source = "FINRA:Margin Statistics page"
+    try:
+        response = requests.get(
+            FINRA_MARGIN_STATISTICS_URL,
+            timeout=30,
+            headers={"User-Agent": "defiant-gatekeeper-index/1.0"},
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        return _missing(source, f"FINRA margin statistics page request failed: {exc}")
+
+    text = html.unescape(re.sub(r"<[^>]+>", " ", response.text))
+    rows = re.findall(
+        r"([A-Z][a-z]{2})-(\d{2})\s+([0-9,]+)\s+([0-9,]+)\s+([0-9,]+)",
+        text,
+    )
+    history: list[dict[str, Any]] = []
+    for month_name, year_suffix, debit_balance, _cash_credit, _margin_credit in rows:
+        try:
+            month = datetime.strptime(month_name, "%b").month
+            year = 2000 + int(year_suffix)
+            last_day = calendar.monthrange(year, month)[1]
+            value = float(debit_balance.replace(",", ""))
+        except ValueError:
+            continue
+        history.append(
+            {
+                "date": f"{year:04d}-{month:02d}-{last_day:02d}",
+                "value": value,
+            }
+        )
+
+    history.sort(key=lambda item: item["date"])
+    if not history:
+        return _missing(source, "FINRA page did not include recognizable margin debt data")
+
+    latest = history[-1]
+    return {
+        "value": latest["value"],
+        "date": latest["date"],
+        "source": source,
+        "freshness": "unknown",
+        "history": history,
+    }
 
 
 def _read_finra_frames(content: bytes, suffix: str) -> list[Any]:
@@ -326,3 +487,12 @@ def _find_margin_debt_column(
             numeric_candidates.append(column)
 
     return numeric_candidates[-1] if numeric_candidates else None
+
+
+def _relative_strength_source(adjusted_price_histories: dict[str, dict[str, Any]]) -> str:
+    sources = {series.get("source", "") for series in adjusted_price_histories.values()}
+    if sources and all(source.startswith("Yahoo Finance:") for source in sources):
+        return "Yahoo Finance:SPY,QQQ,SMH,XLK,IWM"
+    if sources and all(source.startswith("Alpha Vantage:") for source in sources):
+        return "Alpha Vantage:SPY,QQQ,SMH,XLK,IWM"
+    return "ETF relative strength:SPY,QQQ,SMH,XLK,IWM"
