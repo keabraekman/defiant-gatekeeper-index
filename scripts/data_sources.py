@@ -7,6 +7,7 @@ import csv
 import html
 import io
 import re
+from bisect import bisect_right
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,16 @@ def _missing(source: str, message: str) -> dict[str, Any]:
     }
 
 
+def _fallback_or_missing(
+    source: str,
+    primary_error: str,
+    fallback_item: dict[str, Any],
+) -> dict[str, Any]:
+    if not fallback_item.get("error"):
+        return fallback_item
+    return _missing(source, f"{primary_error}; fallback failed: {fallback_item['error']}")
+
+
 def fetch_fred_series(series_id: str, api_key: str | None) -> dict[str, Any]:
     """Fetch recent FRED observations for one series.
 
@@ -46,12 +57,11 @@ def fetch_fred_series(series_id: str, api_key: str | None) -> dict[str, Any]:
 
     import requests
 
-    observation_start = (datetime.utcnow().date() - timedelta(days=5 * 365)).isoformat()
     params = {
         "series_id": series_id,
         "api_key": api_key,
         "file_type": "json",
-        "observation_start": observation_start,
+        "observation_start": "1900-01-01",
         "sort_order": "asc",
     }
 
@@ -60,9 +70,17 @@ def fetch_fred_series(series_id: str, api_key: str | None) -> dict[str, Any]:
         response.raise_for_status()
         payload = response.json()
     except requests.RequestException as exc:
-        return _missing(source, f"FRED request failed: {exc}")
+        return _fallback_or_missing(
+            source,
+            f"FRED request failed: {exc}",
+            fetch_fred_series_public(series_id),
+        )
     except ValueError as exc:
-        return _missing(source, f"FRED JSON parse failed: {exc}")
+        return _fallback_or_missing(
+            source,
+            f"FRED JSON parse failed: {exc}",
+            fetch_fred_series_public(series_id),
+        )
 
     observations: list[dict[str, Any]] = []
     for item in payload.get("observations", []):
@@ -76,7 +94,11 @@ def fetch_fred_series(series_id: str, api_key: str | None) -> dict[str, Any]:
         observations.append({"date": item.get("date"), "value": value})
 
     if not observations:
-        return _missing(source, "FRED returned no numeric observations")
+        return _fallback_or_missing(
+            source,
+            "FRED returned no numeric observations",
+            fetch_fred_series_public(series_id),
+        )
 
     latest = observations[-1]
     return {
@@ -94,10 +116,11 @@ def fetch_fred_series_public(series_id: str) -> dict[str, Any]:
     import requests
 
     source = f"FRED:{series_id}"
+    observation_start = (datetime.now(timezone.utc).date() - timedelta(days=3650)).isoformat()
     try:
         response = requests.get(
             FRED_PUBLIC_CSV_URL,
-            params={"id": series_id},
+            params={"id": series_id, "cosd": observation_start},
             timeout=30,
             headers={"User-Agent": "curl/8.0"},
         )
@@ -144,7 +167,7 @@ def fetch_alpha_vantage_daily_adjusted(symbol: str, api_key: str | None) -> dict
         "function": "TIME_SERIES_DAILY_ADJUSTED",
         "symbol": symbol,
         "apikey": api_key,
-        "outputsize": "compact",
+        "outputsize": "full",
     }
 
     try:
@@ -157,15 +180,19 @@ def fetch_alpha_vantage_daily_adjusted(symbol: str, api_key: str | None) -> dict
         return _missing(source, f"Alpha Vantage JSON parse failed: {exc}")
 
     if "Error Message" in payload:
-        return _missing(source, str(payload["Error Message"]))
+        return _fallback_or_missing(source, str(payload["Error Message"]), fetch_yahoo_daily_adjusted(symbol))
     if "Note" in payload:
-        return _missing(source, str(payload["Note"]))
+        return _fallback_or_missing(source, str(payload["Note"]), fetch_yahoo_daily_adjusted(symbol))
     if "Information" in payload:
-        return _missing(source, str(payload["Information"]))
+        return _fallback_or_missing(source, str(payload["Information"]), fetch_yahoo_daily_adjusted(symbol))
 
     time_series = payload.get("Time Series (Daily)")
     if not isinstance(time_series, dict):
-        return _missing(source, "Alpha Vantage response did not include daily time series")
+        return _fallback_or_missing(
+            source,
+            "Alpha Vantage response did not include daily time series",
+            fetch_yahoo_daily_adjusted(symbol),
+        )
 
     history: list[dict[str, Any]] = []
     for observed_date, values in time_series.items():
@@ -178,7 +205,11 @@ def fetch_alpha_vantage_daily_adjusted(symbol: str, api_key: str | None) -> dict
 
     history.sort(key=lambda item: item["date"])
     if len(history) < 64:
-        return _missing(source, "Alpha Vantage returned fewer than 64 trading days")
+        return _fallback_or_missing(
+            source,
+            "Alpha Vantage returned fewer than 64 trading days",
+            fetch_yahoo_daily_adjusted(symbol),
+        )
 
     latest = history[-1]
     return {
@@ -188,6 +219,24 @@ def fetch_alpha_vantage_daily_adjusted(symbol: str, api_key: str | None) -> dict
         "freshness": "unknown",
         "history": history,
     }
+
+
+def fetch_etf_daily_adjusted(symbol: str, alpha_vantage_api_key: str | None) -> dict[str, Any]:
+    """Fetch ETF adjusted-close history, preferring Yahoo over Alpha Vantage."""
+
+    yahoo_item = fetch_yahoo_daily_adjusted(symbol)
+    if not yahoo_item.get("error"):
+        return yahoo_item
+    if not alpha_vantage_api_key:
+        return yahoo_item
+
+    alpha_vantage_item = fetch_alpha_vantage_daily_adjusted(symbol, alpha_vantage_api_key)
+    if not alpha_vantage_item.get("error"):
+        return alpha_vantage_item
+    return _missing(
+        f"ETF price:{symbol}",
+        f"{yahoo_item['error']}; Alpha Vantage fallback failed: {alpha_vantage_item['error']}",
+    )
 
 
 def fetch_yahoo_daily_adjusted(symbol: str) -> dict[str, Any]:
@@ -200,7 +249,7 @@ def fetch_yahoo_daily_adjusted(symbol: str) -> dict[str, Any]:
         response = requests.get(
             YAHOO_CHART_URL.format(symbol=symbol),
             params={
-                "range": "1y",
+                "range": "10y",
                 "interval": "1d",
                 "events": "history",
                 "includeAdjustedClose": "true",
@@ -258,45 +307,85 @@ def calculate_relative_strength(
     versus SPY over the same trading-day window.
     """
 
-    benchmark = adjusted_price_histories.get(benchmark_symbol)
-    benchmark_history = benchmark.get("history", []) if benchmark else []
-    if len(benchmark_history) <= lookback_days:
+    history = calculate_relative_strength_history(
+        adjusted_price_histories,
+        benchmark_symbol=benchmark_symbol,
+        lookback_days=lookback_days,
+    )
+    if not history:
         return _missing("Alpha Vantage:ETF relative strength", "Missing benchmark history")
 
-    try:
-        benchmark_return = (
-            benchmark_history[-1]["value"] / benchmark_history[-1 - lookback_days]["value"] - 1
-        ) * 100
-    except (KeyError, TypeError, ZeroDivisionError):
-        return _missing("Alpha Vantage:ETF relative strength", "Invalid benchmark history")
-
-    relative: dict[str, float] = {}
-    latest_dates: list[str] = []
-    for symbol, series in adjusted_price_histories.items():
-        if symbol == benchmark_symbol:
-            continue
-        history = series.get("history", [])
-        if len(history) <= lookback_days:
-            continue
-        try:
-            symbol_return = (history[-1]["value"] / history[-1 - lookback_days]["value"] - 1) * 100
-        except (KeyError, TypeError, ZeroDivisionError):
-            continue
-        relative[symbol] = round(symbol_return - benchmark_return, 2)
-        if history[-1].get("date"):
-            latest_dates.append(history[-1]["date"])
-
-    if not relative:
-        return _missing("Alpha Vantage:ETF relative strength", "No ETF relative strength values")
-
     source = _relative_strength_source(adjusted_price_histories)
+    latest = history[-1]
     return {
-        "value": relative,
-        "date": max(latest_dates) if latest_dates else benchmark.get("date"),
+        "value": latest["value"],
+        "date": latest["date"],
         "source": source,
         "freshness": "unknown",
-        "history": [],
+        "history": history,
     }
+
+
+def calculate_relative_strength_history(
+    adjusted_price_histories: dict[str, dict[str, Any]],
+    benchmark_symbol: str = "SPY",
+    lookback_days: int = 63,
+) -> list[dict[str, Any]]:
+    """Calculate point-in-time ETF relative-strength history."""
+
+    prepared = {
+        symbol: _valid_price_history(series.get("history", []))
+        for symbol, series in adjusted_price_histories.items()
+    }
+    prepared_dates = {
+        symbol: [point["date"] for point in history]
+        for symbol, history in prepared.items()
+    }
+    benchmark_history = prepared.get(benchmark_symbol, [])
+    if len(benchmark_history) <= lookback_days:
+        return []
+
+    benchmark_dates = prepared_dates[benchmark_symbol]
+    relative_history: list[dict[str, Any]] = []
+    for benchmark_index in range(lookback_days, len(benchmark_history)):
+        observed_date = benchmark_dates[benchmark_index]
+        benchmark_prior = benchmark_history[benchmark_index - lookback_days]["value"]
+        if benchmark_prior == 0:
+            continue
+        benchmark_return = (
+            benchmark_history[benchmark_index]["value"] / benchmark_prior - 1
+        ) * 100
+
+        relative: dict[str, float] = {}
+        for symbol, history in prepared.items():
+            if symbol == benchmark_symbol:
+                continue
+            symbol_index = bisect_right(prepared_dates[symbol], observed_date) - 1
+            if symbol_index < lookback_days:
+                continue
+            prior = history[symbol_index - lookback_days]["value"]
+            if prior == 0:
+                continue
+            symbol_return = (history[symbol_index]["value"] / prior - 1) * 100
+            relative[symbol] = round(symbol_return - benchmark_return, 2)
+
+        if relative:
+            relative_history.append({"date": observed_date, "value": relative})
+
+    return relative_history
+
+
+def _valid_price_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    parsed: list[dict[str, Any]] = []
+    for item in history:
+        observed_date = item.get("date")
+        try:
+            value = float(item.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if observed_date:
+            parsed.append({"date": str(observed_date)[:10], "value": value})
+    return sorted(parsed, key=lambda item: item["date"])
 
 
 def fetch_finra_margin_debt(url: str | None) -> dict[str, Any]:
@@ -312,7 +401,11 @@ def fetch_finra_margin_debt(url: str | None) -> dict[str, Any]:
         response = requests.get(url, timeout=30)
         response.raise_for_status()
     except requests.RequestException as exc:
-        return _missing(source, f"FINRA request failed: {exc}")
+        return _fallback_or_missing(
+            source,
+            f"FINRA request failed: {exc}",
+            fetch_finra_margin_debt_page(),
+        )
 
     content = response.content
     suffix = Path(url.split("?")[0]).suffix.lower()
@@ -331,9 +424,17 @@ def fetch_finra_margin_debt(url: str | None) -> dict[str, Any]:
                     "history": parsed,
                 }
     except Exception as exc:  # noqa: BLE001 - return as data-quality issue.
-        return _missing(source, f"FINRA parse failed: {exc}")
+        return _fallback_or_missing(
+            source,
+            f"FINRA parse failed: {exc}",
+            fetch_finra_margin_debt_page(),
+        )
 
-    return _missing(source, "FINRA file did not include recognizable margin debt data")
+    return _fallback_or_missing(
+        source,
+        "FINRA file did not include recognizable margin debt data",
+        fetch_finra_margin_debt_page(),
+    )
 
 
 def fetch_finra_margin_debt_page() -> dict[str, Any]:

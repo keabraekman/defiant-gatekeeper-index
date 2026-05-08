@@ -13,7 +13,7 @@ from typing import Any
 from calculations import calculate_dashboard, parse_date
 from data_sources import (
     calculate_relative_strength,
-    fetch_alpha_vantage_daily_adjusted,
+    fetch_etf_daily_adjusted,
     fetch_finra_margin_debt,
     fetch_fred_series,
 )
@@ -28,9 +28,9 @@ FRED_SERIES = {
     "effective_fed_funds_rate": ("DFF", 10),
     "fed_balance_sheet": ("WALCL", 21),
     "high_yield_credit_spread": ("BAMLH0A0HYM2", 14),
-    "cpi": ("CPIAUCSL", 60),
-    "core_cpi": ("CPILFESL", 60),
-    "ppi": ("PPIACO", 60),
+    "cpi": ("CPIAUCSL", 90),
+    "core_cpi": ("CPILFESL", 90),
+    "ppi": ("PPIACO", 90),
     "unemployment_rate": ("UNRATE", 75),
     "initial_jobless_claims": ("ICSA", 14),
     "nonfarm_payrolls": ("PAYEMS", 75),
@@ -79,8 +79,6 @@ def run_live_update() -> dict[str, Any]:
     }
 
     fred_api_key = os.getenv("FRED_API_KEY")
-    if not fred_api_key:
-        issues.append("Missing FRED_API_KEY; used FRED public CSV fallback.")
     for logical_name, (series_id, max_age_days) in FRED_SERIES.items():
         item = fetch_fred_series(series_id, fred_api_key)
         if item.get("error"):
@@ -94,8 +92,6 @@ def run_live_update() -> dict[str, Any]:
         inputs[logical_name] = item
 
     finra_url = os.getenv("FINRA_MARGIN_DEBT_URL")
-    if not finra_url:
-        issues.append("Missing FINRA_MARGIN_DEBT_URL; used FINRA official margin-statistics page fallback.")
     finra_item = fetch_finra_margin_debt(finra_url)
     if finra_item.get("error"):
         issues.append(
@@ -111,12 +107,10 @@ def run_live_update() -> dict[str, Any]:
     inputs["finra_margin_debt"] = finra_item
 
     alpha_vantage_key = os.getenv("ALPHA_VANTAGE_API_KEY")
-    if not alpha_vantage_key:
-        issues.append("Missing ALPHA_VANTAGE_API_KEY; used Yahoo Finance public chart fallback for ETFs.")
     etf_histories: dict[str, dict[str, Any]] = {}
     etf_errors: list[str] = []
     for symbol in ETF_SYMBOLS:
-        item = fetch_alpha_vantage_daily_adjusted(symbol, alpha_vantage_key)
+        item = fetch_etf_daily_adjusted(symbol, alpha_vantage_key)
         if item.get("error"):
             etf_errors.append(f"{symbol}: {item['error']}")
         else:
